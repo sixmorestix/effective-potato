@@ -1,0 +1,118 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © SemiSarah
+
+//@version=5
+indicator("GLD Intraday Bias & Pullbacks (Options-Friendly, EMA8)", overlay=true, max_labels_count=500, max_lines_count=500)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SETTINGS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+showHUD     = input.bool(true, "Show HUD Panel")
+hudPosition = input.string("Top Right", "HUD Position", options = ["Top Left", "Top Middle", "Top Right", "Bottom Left", "Bottom Middle", "Bottom Right"])
+hudOpacity  = input.int(40, "HUD Background Transparency (0–100)", minval=0, maxval=100)
+
+pullbackPct = input.float(0.75, "Pullback Sensitivity vs EMA20 (%)", minval=0.1)
+
+gldSymbol   = input.symbol("GLD",  "GLD Symbol")
+gcSymbol    = input.symbol("GC1!", "GC1! Futures Symbol")
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// INTRADAY EMAs (CURRENT TIMEFRAME)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ema8   = ta.ema(close, 8)
+ema20  = ta.ema(close, 20)
+ema50  = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+
+plot(ema8,   title="EMA 8",   color=color.new(color.red,   0), linewidth=2)
+plot(ema20,  title="EMA 20",  color=color.new(color.teal,  0))
+plot(ema50,  title="EMA 50",  color=color.new(color.orange,0))
+plot(ema200, title="EMA 200", color=color.new(color.purple,0))
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 4H (HTF) METRICS FOR GLD & GC1
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+gld4hClose   = request.security(gldSymbol, "240", close)
+gld4hEMA50   = request.security(gldSymbol, "240", ta.ema(close, 50))
+gld4hEMA200  = request.security(gldSymbol, "240", ta.ema(close, 200))
+
+gc4hClose    = request.security(gcSymbol,  "240", close)
+gc4hSMA20    = request.security(gcSymbol,  "240", ta.sma(close, 20))
+
+gldUpHTF   = gld4hClose > gld4hEMA50 and gld4hEMA50 > gld4hEMA200
+gldDownHTF = gld4hClose < gld4hEMA50 and gld4hEMA50 < gld4hEMA200
+
+gcUpHTF    = gc4hClose > gc4hSMA20
+gcDownHTF  = gc4hClose < gc4hSMA20
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// INTRADAY BIAS WITH EMA8 GATE
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+biasLong    = gldUpHTF and gcUpHTF and close > ema8
+biasShort   = gldDownHTF and gcDownHTF and close < ema8
+biasNeutral = not biasLong and not biasShort
+
+barColor = biasLong ? color.new(color.green, 0) : biasShort ? color.new(color.red, 0) : color.new(color.gray, 60)
+barcolor(barColor)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PULLBACK LOGIC (CALL / PUT)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+dist20 = math.abs((close - ema20) / ema20) * 100.0
+
+callSignal = biasLong and dist20 < pullbackPct and close > ema8 and close > open
+putSignal  = biasShort and dist20 < pullbackPct and close < ema8 and close < open
+
+plotshape(callSignal, title="CALL", style=shape.labelup,   location=location.belowbar, color=color.new(color.green, 0), text="CALL", size=size.tiny, textcolor=color.black)
+plotshape(putSignal,  title="PUT",  style=shape.labeldown, location=location.abovebar, color=color.new(color.red,   0), text="PUT",  size=size.tiny, textcolor=color.white)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// HUD PANEL WITH TRADE STATUS (TABLE)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Fixed table size: 1 column, 4 rows
+var table  hudTbl     = na
+var string lastHudPos = ""
+
+// Text pieces
+biasText  = biasLong ? "LONG (CALLS)" : biasShort ? "SHORT (PUTS)" : "NEUTRAL"
+gcText    = gcUpHTF ? "GC1: UP" : gcDownHTF ? "GC1: DOWN" : "GC1: NEUTRAL"
+trendText = gldUpHTF ? "4H GLD Trend: UP" : gldDownHTF ? "4H GLD Trend: DOWN" : "4H GLD Trend: NEUTRAL"
+
+// Trade status
+tradeStatus = biasLong or biasShort ? "OK TO TRADE" : (gldUpHTF or gldDownHTF ? "NEUTRAL – WAIT" : "NO TRADE")
+
+// Map HUD position string → table position enum (single expression)
+posEnum = hudPosition == "Top Left"      ? position.top_left :
+          hudPosition == "Top Middle"    ? position.top_center :
+          hudPosition == "Top Right"     ? position.top_right :
+          hudPosition == "Bottom Left"   ? position.bottom_left :
+          hudPosition == "Bottom Middle" ? position.bottom_center :
+                                           position.bottom_right
+
+if barstate.islast
+    // HUD turned OFF
+    if not showHUD
+        if not na(hudTbl)
+            table.clear(hudTbl, 0, 0, 3, 0)
+            hudTbl     := na
+            lastHudPos := ""
+    else
+        if na(hudTbl) or hudPosition != lastHudPos
+            if not na(hudTbl)
+                table.clear(hudTbl, 0, 0, 3, 0)
+            hudTbl     := table.new(posEnum, 1, 4, border_width=1, border_color=color.new(color.white, 70), frame_color=color.new(color.white, 80), bgcolor=color.new(color.black, hudOpacity))
+            lastHudPos := hudPosition
+
+        if not na(hudTbl)
+            statusBg = tradeStatus == "OK TO TRADE" ? color.new(color.green, 60) : tradeStatus == "NO TRADE" ? color.new(color.red, 60) : color.new(color.yellow, 60)
+
+            table.cell(hudTbl, 0, 0, "Status: " + tradeStatus, text_color=color.white, bgcolor=statusBg)
+            table.cell(hudTbl, 0, 1, "Bias: " + biasText,     text_color=color.white, bgcolor=color.new(color.black, hudOpacity))
+            table.cell(hudTbl, 0, 2, gcText,                  text_color=color.white, bgcolor=color.new(color.black, hudOpacity))
+            table.cell(hudTbl, 0, 3, trendText,               text_color=color.white, bgcolor=color.new(color.black, hudOpacity))
